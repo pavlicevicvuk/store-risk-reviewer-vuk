@@ -1,0 +1,7 @@
+{
+  "name": "ai-reviewer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "v1 MVP report-only PR bot: analyzes merged RN PR diffs for iOS/Android app store rejection risk."
+}
