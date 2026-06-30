@@ -45,7 +45,8 @@ const buildPrompt = (file: DiffFile): string =>
   [
     INSTRUCTIONS,
     '',
-    'Rule pack (only flag issues that match one of these rules):',
+    'Rule pack (only flag issues that match one of these rules).',
+    'Lines marked "Official" quote the current Apple/Google guideline text and are authoritative:',
     serializeRulesForPrompt(),
     '',
     `Changed file: ${file.path} (git status: ${file.status})`,

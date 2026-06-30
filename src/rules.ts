@@ -1,3 +1,4 @@
+import { getExcerptsForRule } from './corpus.ts';
 import type { Rule } from './types.ts';
 
 export const RULES_VERSION = '2026-06-24.1';
@@ -185,11 +186,24 @@ export const RULES: Rule[] = [
   },
 ];
 
+const officialExcerpts = (ruleId: string): string =>
+  getExcerptsForRule(ruleId)
+    .map(
+      (chunk) =>
+        `  Official (${chunk.source === 'apple' ? 'Apple' : 'Google Play'} ${chunk.section}): ` +
+        `${chunk.text} [${chunk.url}]`,
+    )
+    .join('\n');
+
 export const serializeRulesForPrompt = (): string =>
-  RULES.map(
-    (rule) =>
-      `- [${rule.id}] (${rule.platform}, ${rule.category}, default severity ${rule.defaultSeverity}) ${rule.title}\n` +
-      `  Reference: ${rule.guidelineRef}\n` +
-      `  Signals: ${rule.signals}\n` +
+  RULES.map((rule) => {
+    const lines = [
+      `- [${rule.id}] (${rule.platform}, ${rule.category}, default severity ${rule.defaultSeverity}) ${rule.title}`,
+      `  Reference: ${rule.guidelineRef}`,
+      `  Signals: ${rule.signals}`,
       `  Remediation: ${rule.remediation}`,
-  ).join('\n');
+    ];
+    const official = officialExcerpts(rule.id);
+    if (official) lines.push(official);
+    return lines.join('\n');
+  }).join('\n');

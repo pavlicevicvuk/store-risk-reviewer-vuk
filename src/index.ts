@@ -3,6 +3,7 @@ import { writeFileSync } from 'node:fs';
 import { analyzeFile, getModelLabel } from './analyze.ts';
 import { cacheKey, readCache, writeCache } from './cache.ts';
 import { collectDiff } from './collectDiff.ts';
+import { CORPUS_VERSION } from './corpus.ts';
 import { renderNoRelevantFiles, renderReport } from './render.ts';
 import { RULES_VERSION } from './rules.ts';
 import { scoreFindings } from './score.ts';
@@ -42,7 +43,7 @@ const main = async (): Promise<void> => {
   let filesCached = 0;
 
   for (const file of relevantFiles) {
-    const key = cacheKey([RULES_VERSION, model, file.path, file.patch]);
+    const key = cacheKey([RULES_VERSION, CORPUS_VERSION, model, file.path, file.patch]);
     const cached = readCache(key, file.path);
     if (cached) {
       findings.push(...cached);
