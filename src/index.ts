@@ -1,6 +1,6 @@
 import { writeFileSync } from 'node:fs';
 
-import { analyzeFile, getModelLabel } from './analyze.ts';
+import { analyzeChanges, getModelLabel, REVIEW_STRATEGY } from './analyze.ts';
 import { cacheKey, readCache, writeCache } from './cache.ts';
 import { collectDiff } from './collectDiff.ts';
 import { CORPUS_VERSION } from './corpus.ts';
@@ -8,7 +8,7 @@ import { renderNoRelevantFiles, renderReport } from './render.ts';
 import { RULES_VERSION } from './rules.ts';
 import { scoreFindings } from './score.ts';
 import { selectFiles } from './selectFiles.ts';
-import type { Finding } from './types.ts';
+import type { DiffFile, Finding } from './types.ts';
 
 const getBaseRef = (): string =>
   process.env.AI_REVIEW_BASE_SHA || process.env.GITHUB_BASE_REF || 'origin/main';
@@ -39,22 +39,18 @@ const main = async (): Promise<void> => {
     throw new Error('CURSOR_API_KEY is not set; cannot run the Cursor agent.');
   }
 
-  const findings: Finding[] = [];
-  let filesCached = 0;
+  const key = cacheKey([
+    RULES_VERSION,
+    CORPUS_VERSION,
+    REVIEW_STRATEGY,
+    model,
+    getHeadRef(),
+    ...relevantFiles.map((file) => `${file.path}\u0000${file.patch}`),
+  ]);
 
-  for (const file of relevantFiles) {
-    const key = cacheKey([RULES_VERSION, CORPUS_VERSION, model, file.path, file.patch]);
-    const cached = readCache(key, file.path);
-    if (cached) {
-      findings.push(...cached);
-      filesCached += 1;
-      continue;
-    }
-
-    const analysis = await analyzeFile(file);
-    writeCache(key, analysis.findings);
-    findings.push(...analysis.findings);
-  }
+  const cached = readCache(key, '');
+  const fromCache = cached !== undefined;
+  const findings: Finding[] = cached ?? (await runAnalysis(key, relevantFiles));
 
   const risk = scoreFindings(findings);
 
@@ -64,16 +60,23 @@ const main = async (): Promise<void> => {
       ...risk,
       findings,
       filesAnalyzed: relevantFiles.length,
-      filesCached,
+      agentRequests: fromCache ? 0 : 1,
+      fromCache,
       model,
       rulesVersion: RULES_VERSION,
     }),
   );
 
   console.log(
-    `AI review complete: combined risk ${risk.combinedRisk}, ${findings.length} finding(s), ` +
-      `${relevantFiles.length - filesCached} Cursor request(s) / ${filesCached} cached.`,
+    `AI review complete: combined risk ${risk.combinedRisk}, ${findings.length} finding(s) ` +
+      `across ${relevantFiles.length} changed file(s); ${fromCache ? 'served from cache' : '1 Cursor request'}.`,
   );
+};
+
+const runAnalysis = async (key: string, relevantFiles: DiffFile[]): Promise<Finding[]> => {
+  const analysis = await analyzeChanges(relevantFiles);
+  writeCache(key, analysis.findings);
+  return analysis.findings;
 };
 
 main().catch((error: unknown) => {

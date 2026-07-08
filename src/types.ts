@@ -48,7 +48,8 @@ export type RiskSummary = {
 export type ReportInput = RiskSummary & {
   findings: Finding[];
   filesAnalyzed: number;
-  filesCached: number;
+  agentRequests: number;
+  fromCache: boolean;
   model: string;
   rulesVersion: string;
 };
