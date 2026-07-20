@@ -1,8 +1,9 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
-import { serializeRulesForPrompt } from './rules.ts';
-import type { DiffFile, FileAnalysis } from './types.ts';
+import { serializeGuidelinesForPrompt } from './corpus.ts';
+import { serializeRuleSignalsForPrompt } from './rules.ts';
+import { REVIEW_BASIS, type DiffFile, type FileAnalysis, type ReviewBasis } from './types.ts';
 import { extractFindingsPayload } from './validate.ts';
 
 const execFileAsync = promisify(execFile);
@@ -29,14 +30,21 @@ const getModelId = (): string | undefined => process.env.AI_REVIEW_MODEL || unde
 
 export const getModelLabel = (): string => getModelId() ?? 'Cursor account default';
 
-const INSTRUCTIONS = [
+const isReviewBasis = (value: string): value is ReviewBasis =>
+  value === REVIEW_BASIS.rules || value === REVIEW_BASIS.docs;
+
+export const getReviewBasis = (): ReviewBasis => {
+  const raw = (process.env.AI_REVIEW_BASIS || '').trim().toLowerCase();
+  return isReviewBasis(raw) ? raw : REVIEW_BASIS.rules;
+};
+
+const COMMON_INSTRUCTIONS = [
   'You are a mobile release compliance reviewer for a React Native app.',
   'The full repository for this pull request is checked out in your current working directory and you have READ access to all of it.',
-  'Decide whether the pull request introduces iOS App Store or Google Play rejection risk, using ONLY the provided rule pack.',
   'The changed files and their unified diffs are listed below as your starting point.',
   'Do NOT restrict yourself to the diff: open and read any other files in the repository you need for context',
   '(feature implementations, Info.plist, AndroidManifest.xml, PrivacyInfo.xcprivacy, entitlements, package.json, sibling screens, etc.).',
-  'For absence-based rules (e.g. missing account deletion, missing Sign in with Apple, missing usage-description strings),',
+  'For absence-based issues (e.g. missing account deletion, missing Sign in with Apple, missing usage-description strings),',
   'search the repository first and only report a finding after confirming the required mitigation is genuinely absent.',
   'Correlate configuration with usage: a permission, background mode, or SDK is lower risk when the code clearly uses it for a qualifying feature.',
   'Be precise and conservative: only report a finding when you have concrete evidence. Do not modify anything.',
@@ -46,7 +54,29 @@ const INSTRUCTIONS = [
   'severity ("low"|"medium"|"high"|"critical"), title, file (the repository path the risk lives in),',
   'evidence (short quote or specific description of what you found), guidelineRef, and remediation.',
   'If there is no risk, return {"findings": []}.',
-].join(' ');
+];
+
+const BASIS_INSTRUCTION: Record<ReviewBasis, string> = {
+  rules:
+    'Decide whether the pull request introduces iOS App Store or Google Play rejection risk, using ONLY the predefined rule pack below. ' +
+    'Set each finding\'s ruleId to the matching rule id and guidelineRef to that rule\'s reference.',
+  docs:
+    'Decide whether the pull request introduces iOS App Store or Google Play rejection risk, using ONLY the official Apple/Google guideline excerpts below. ' +
+    'Set each finding\'s guidelineRef to the guideline section it violates (e.g. "Apple 5.1.2") and ruleId to the excerpt id it maps to.',
+};
+
+const buildInstructions = (basis: ReviewBasis): string =>
+  [BASIS_INSTRUCTION[basis], ...COMMON_INSTRUCTIONS].join(' ');
+
+const buildBasisSection = (basis: ReviewBasis): string =>
+  basis === REVIEW_BASIS.rules
+    ? ['Predefined rule pack (only flag issues that match one of these rules):', serializeRuleSignalsForPrompt()].join(
+        '\n',
+      )
+    : [
+        'Official Apple/Google guideline excerpts (only flag issues that violate one of these):',
+        serializeGuidelinesForPrompt(),
+      ].join('\n');
 
 const truncatePatch = (patch: string): string =>
   patch.length > MAX_PATCH_CHARS
@@ -82,13 +112,11 @@ const renderChangedFiles = (files: DiffFile[]): string => {
   return blocks.join('\n\n');
 };
 
-const buildPrompt = (files: DiffFile[]): string =>
+const buildPrompt = (files: DiffFile[], basis: ReviewBasis): string =>
   [
-    INSTRUCTIONS,
+    buildInstructions(basis),
     '',
-    'Rule pack (only flag issues that match one of these rules).',
-    'Lines marked "Official" quote the current Apple/Google guideline text and are authoritative:',
-    serializeRulesForPrompt(),
+    buildBasisSection(basis),
     '',
     `Changed files in this pull request (${files.length}):`,
     renderChangedFiles(files),
@@ -129,10 +157,13 @@ const buildArgs = (prompt: string): string[] => {
   return args;
 };
 
-export const analyzeChanges = async (files: DiffFile[]): Promise<FileAnalysis> => {
+export const analyzeChanges = async (
+  files: DiffFile[],
+  basis: ReviewBasis,
+): Promise<FileAnalysis> => {
   const fallbackFile = files[0]?.path ?? '';
   try {
-    const { stdout } = await execFileAsync(AGENT_BIN, buildArgs(buildPrompt(files)), {
+    const { stdout } = await execFileAsync(AGENT_BIN, buildArgs(buildPrompt(files, basis)), {
       cwd: getRepoRoot(),
       encoding: 'utf8',
       maxBuffer: MAX_BUFFER,

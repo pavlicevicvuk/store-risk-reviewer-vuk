@@ -195,15 +195,21 @@ const officialExcerpts = (ruleId: string): string =>
     )
     .join('\n');
 
+const renderRule = (rule: Rule): string =>
+  [
+    `- [${rule.id}] (${rule.platform}, ${rule.category}, default severity ${rule.defaultSeverity}) ${rule.title}`,
+    `  Reference: ${rule.guidelineRef}`,
+    `  Signals: ${rule.signals}`,
+    `  Remediation: ${rule.remediation}`,
+  ].join('\n');
+
+// Rule pack combined with the official guideline excerpts. Used by the whole-repo audit.
 export const serializeRulesForPrompt = (): string =>
   RULES.map((rule) => {
-    const lines = [
-      `- [${rule.id}] (${rule.platform}, ${rule.category}, default severity ${rule.defaultSeverity}) ${rule.title}`,
-      `  Reference: ${rule.guidelineRef}`,
-      `  Signals: ${rule.signals}`,
-      `  Remediation: ${rule.remediation}`,
-    ];
     const official = officialExcerpts(rule.id);
-    if (official) lines.push(official);
-    return lines.join('\n');
+    return official ? `${renderRule(rule)}\n${official}` : renderRule(rule);
   }).join('\n');
+
+// Just the curated rule pack, with no official guideline text attached.
+export const serializeRuleSignalsForPrompt = (): string =>
+  RULES.map(renderRule).join('\n');

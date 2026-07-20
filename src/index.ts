@@ -1,6 +1,6 @@
 import { writeFileSync } from 'node:fs';
 
-import { analyzeChanges, getModelLabel, REVIEW_STRATEGY } from './analyze.ts';
+import { analyzeChanges, getModelLabel, getReviewBasis, REVIEW_STRATEGY } from './analyze.ts';
 import { cacheKey, readCache, writeCache } from './cache.ts';
 import { collectDiff } from './collectDiff.ts';
 import { CORPUS_VERSION } from './corpus.ts';
@@ -8,7 +8,7 @@ import { renderNoRelevantFiles, renderReport } from './render.ts';
 import { RULES_VERSION } from './rules.ts';
 import { scoreFindings } from './score.ts';
 import { selectFiles } from './selectFiles.ts';
-import type { DiffFile, Finding } from './types.ts';
+import type { DiffFile, Finding, ReviewBasis } from './types.ts';
 
 const getBaseRef = (): string =>
   process.env.AI_REVIEW_BASE_SHA || process.env.GITHUB_BASE_REF || 'origin/main';
@@ -24,13 +24,14 @@ const writeReport = (path: string, content: string): void => {
 
 const main = async (): Promise<void> => {
   const model = getModelLabel();
+  const basis = getReviewBasis();
   const outputPath = getOutputPath();
 
   const changedFiles = collectDiff(getBaseRef(), getHeadRef());
   const relevantFiles = selectFiles(changedFiles);
 
   if (relevantFiles.length === 0) {
-    writeReport(outputPath, renderNoRelevantFiles(RULES_VERSION, model));
+    writeReport(outputPath, renderNoRelevantFiles(basis, RULES_VERSION, CORPUS_VERSION, model));
     console.log('AI review: no store-relevant files changed.');
     return;
   }
@@ -40,6 +41,7 @@ const main = async (): Promise<void> => {
   }
 
   const key = cacheKey([
+    basis,
     RULES_VERSION,
     CORPUS_VERSION,
     REVIEW_STRATEGY,
@@ -50,7 +52,7 @@ const main = async (): Promise<void> => {
 
   const cached = readCache(key, '');
   const fromCache = cached !== undefined;
-  const findings: Finding[] = cached ?? (await runAnalysis(key, relevantFiles));
+  const findings: Finding[] = cached ?? (await runAnalysis(key, relevantFiles, basis));
 
   const risk = scoreFindings(findings);
 
@@ -63,7 +65,9 @@ const main = async (): Promise<void> => {
       agentRequests: fromCache ? 0 : 1,
       fromCache,
       model,
+      basis,
       rulesVersion: RULES_VERSION,
+      corpusVersion: CORPUS_VERSION,
     }),
   );
 
@@ -73,8 +77,12 @@ const main = async (): Promise<void> => {
   );
 };
 
-const runAnalysis = async (key: string, relevantFiles: DiffFile[]): Promise<Finding[]> => {
-  const analysis = await analyzeChanges(relevantFiles);
+const runAnalysis = async (
+  key: string,
+  relevantFiles: DiffFile[],
+  basis: ReviewBasis,
+): Promise<Finding[]> => {
+  const analysis = await analyzeChanges(relevantFiles, basis);
   writeCache(key, analysis.findings);
   return analysis.findings;
 };

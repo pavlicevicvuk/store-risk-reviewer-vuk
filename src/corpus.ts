@@ -61,3 +61,20 @@ export const loadCorpus = (): GuidelineChunk[] => {
 
 export const getExcerptsForRule = (ruleId: string): GuidelineChunk[] =>
   loadCorpus().filter((chunk) => chunk.ruleIds.includes(ruleId));
+
+const SOURCE_LABEL: Record<GuidelineChunk['source'], string> = {
+  apple: 'Apple App Store Review',
+  google: 'Google Play',
+};
+
+// Just the official Apple/Google guideline excerpts, with none of the curated rule pack.
+export const serializeGuidelinesForPrompt = (): string =>
+  loadCorpus()
+    .map((chunk) =>
+      [
+        `- [${chunk.id}] (${SOURCE_LABEL[chunk.source]} ${chunk.section}) ${chunk.title}`,
+        `  Guideline: ${chunk.text}`,
+        `  Source: ${chunk.url}`,
+      ].join('\n'),
+    )
+    .join('\n');

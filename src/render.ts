@@ -1,6 +1,18 @@
-import type { Finding, FindingCategory, ReportInput, RiskLevel } from './types.ts';
+import { REVIEW_BASIS, type Finding, type FindingCategory, type ReportInput, type ReviewBasis, type RiskLevel } from './types.ts';
 
-export const REPORT_MARKER = '<!-- ai-review-report -->';
+// Each basis posts its own PR comment; the marker keeps the two comments distinct so the
+// upsert in CI edits the right one instead of clobbering the other.
+export const reportMarker = (basis: ReviewBasis): string => `<!-- ai-review-report-${basis} -->`;
+
+const BASIS_HEADING: Record<ReviewBasis, string> = {
+  rules: 'AI App Store Rejection Risk Review (Predefined Rules)',
+  docs: 'AI App Store Rejection Risk Review (Official Guidelines)',
+};
+
+const BASIS_SOURCE_LINE: Record<ReviewBasis, (input: ReportInput) => string> = {
+  rules: (input) => `- Basis: predefined rule pack \`${input.rulesVersion}\``,
+  docs: (input) => `- Basis: official Apple/Google guideline corpus \`${input.corpusVersion}\``,
+};
 
 const RISK_BADGE: Record<RiskLevel, string> = {
   Low: 'Low',
@@ -29,8 +41,8 @@ const PLATFORM_LABEL: Record<Finding['platform'], string> = {
   both: 'iOS + Android',
 };
 
-const header = (): string =>
-  `${REPORT_MARKER}\n## AI App Store Rejection Risk Review`;
+const header = (basis: ReviewBasis): string =>
+  `${reportMarker(basis)}\n## ${BASIS_HEADING[basis]}`;
 
 const riskTable = (input: ReportInput): string =>
   [
@@ -73,7 +85,7 @@ const runDetails = (input: ReportInput): string =>
     '<summary>Run details &amp; usage</summary>',
     '',
     `- Engine: Cursor agent (\`${input.model}\`), whole-repository context`,
-    `- Rule pack: \`${input.rulesVersion}\``,
+    BASIS_SOURCE_LINE[input.basis](input),
     `- Changed files reviewed: ${input.filesAnalyzed}`,
     `- Cursor requests: ${input.agentRequests}`,
     `- Served from cache: ${input.fromCache ? 'yes' : 'no'}`,
@@ -85,7 +97,7 @@ const runDetails = (input: ReportInput): string =>
   ].join('\n');
 
 export const renderReport = (input: ReportInput): string => {
-  const body = [header(), '', riskTable(input), ''];
+  const body = [header(input.basis), '', riskTable(input), ''];
   if (input.findings.length === 0) {
     body.push('No app store rejection risks detected in the changed files.');
   } else {
@@ -95,9 +107,14 @@ export const renderReport = (input: ReportInput): string => {
   return `${body.join('\n')}\n`;
 };
 
-export const renderNoRelevantFiles = (rulesVersion: string, model: string): string =>
+export const renderNoRelevantFiles = (
+  basis: ReviewBasis,
+  rulesVersion: string,
+  corpusVersion: string,
+  model: string,
+): string =>
   [
-    header(),
+    header(basis),
     '',
     'No store-relevant files changed in this merge, so no risk analysis was run.',
     '',
@@ -105,7 +122,9 @@ export const renderNoRelevantFiles = (rulesVersion: string, model: string): stri
     '<summary>Run details</summary>',
     '',
     `- Engine: Cursor agent (\`${model}\`)`,
-    `- Rule pack: \`${rulesVersion}\``,
+    basis === REVIEW_BASIS.rules
+      ? `- Basis: predefined rule pack \`${rulesVersion}\``
+      : `- Basis: official Apple/Google guideline corpus \`${corpusVersion}\``,
     '- Cursor requests: 0',
     '</details>',
     '',
