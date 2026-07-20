@@ -1,34 +1,24 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-
 import { serializeGuidelinesForPrompt } from './corpus.ts';
+import { runAgent, getModelLabel } from './agentRunner.ts';
 import { serializeRuleSignalsForPrompt } from './rules.ts';
-import { REVIEW_BASIS, type DiffFile, type FileAnalysis, type ReviewBasis } from './types.ts';
+import { REVIEW_BASIS, type DiffFile, type FileAnalysis, type Finding, type ReviewBasis } from './types.ts';
 import { extractFindingsPayload } from './validate.ts';
 
-const execFileAsync = promisify(execFile);
+export { getModelLabel };
 
-const AGENT_BIN = process.env.AI_REVIEW_AGENT_BIN || 'cursor-agent';
 const MAX_PATCH_CHARS = 24000;
-const MAX_TOTAL_DIFF_CHARS = 120000;
-const MAX_BUFFER = 32 * 1024 * 1024;
-// Repo exploration takes longer than a single-file read, so allow more headroom.
-const DEFAULT_TIMEOUT_MS = 600000;
+// Per-request budget for inlined diff text. Keeps each prompt bounded regardless of how
+// large the pull request is; anything beyond it is either chunked or handed to the agent
+// to read directly from the checked-out repository.
+const INLINE_BUDGET_CHARS = 48000;
 
-// Bump when the review strategy changes so cached results are invalidated.
-export const REVIEW_STRATEGY = 'whole-repo-v1';
-
-const getTimeoutMs = (): number => {
-  const raw = Number(process.env.AI_REVIEW_AGENT_TIMEOUT_MS);
-  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_TIMEOUT_MS;
+const getMaxChunks = (): number => {
+  const raw = Number(process.env.AI_REVIEW_MAX_CHUNKS);
+  return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : 3;
 };
 
-const getRepoRoot = (): string => process.env.AI_REVIEW_REPO_ROOT || process.cwd();
-
-// Undefined means "let the Cursor account default model decide".
-const getModelId = (): string | undefined => process.env.AI_REVIEW_MODEL || undefined;
-
-export const getModelLabel = (): string => getModelId() ?? 'Cursor account default';
+// Bump when the review strategy changes so cached results are invalidated.
+export const REVIEW_STRATEGY = 'bounded-chunked-v2';
 
 const isReviewBasis = (value: string): value is ReviewBasis =>
   value === REVIEW_BASIS.rules || value === REVIEW_BASIS.docs;
@@ -59,7 +49,7 @@ const COMMON_INSTRUCTIONS = [
 const BASIS_INSTRUCTION: Record<ReviewBasis, string> = {
   rules:
     'Decide whether the pull request introduces iOS App Store or Google Play rejection risk, using ONLY the predefined rule pack below. ' +
-    'Set each finding\'s ruleId to the matching rule id and guidelineRef to that rule\'s reference.',
+    "Set each finding's ruleId to the matching rule id and guidelineRef to that rule's reference.",
   docs:
     'Decide whether the pull request introduces iOS App Store or Google Play rejection risk, using ONLY the official Apple/Google guideline excerpts below. ' +
     'Set each finding\'s guidelineRef to the guideline section it violates (e.g. "Apple 5.1.2") and ruleId to the excerpt id it maps to.',
@@ -91,36 +81,56 @@ const renderChangedFile = (file: DiffFile): string =>
     '```',
   ].join('\n');
 
-const renderChangedFiles = (files: DiffFile[]): string => {
-  const blocks: string[] = [];
-  const omitted: string[] = [];
-  let total = 0;
+// Greedily pack changed files into chunks whose inlined diff stays under the budget, then
+// cap the number of chunks so the number of agent requests (and CI time) stays bounded.
+// Files that do not fit are returned as "overflow" for the agent to read directly.
+export const planChunks = (
+  files: DiffFile[],
+  maxChunks: number,
+): { chunks: DiffFile[][]; overflow: DiffFile[] } => {
+  const chunks: DiffFile[][] = [];
+  let current: DiffFile[] = [];
+  let size = 0;
   for (const file of files) {
-    const block = renderChangedFile(file);
-    if (total + block.length > MAX_TOTAL_DIFF_CHARS) {
-      omitted.push(file.path);
-      continue;
+    const blockLen = renderChangedFile(file).length;
+    if (current.length > 0 && size + blockLen > INLINE_BUDGET_CHARS) {
+      chunks.push(current);
+      current = [];
+      size = 0;
     }
-    blocks.push(block);
-    total += block.length;
+    current.push(file);
+    size += blockLen;
   }
-  if (omitted.length > 0) {
-    blocks.push(
-      `Diffs for these changed files were omitted for length; open them directly in the working tree to review:\n- ${omitted.join('\n- ')}`,
-    );
-  }
-  return blocks.join('\n\n');
+  if (current.length > 0) chunks.push(current);
+
+  if (chunks.length <= maxChunks) return { chunks, overflow: [] };
+  return { chunks: chunks.slice(0, maxChunks), overflow: chunks.slice(maxChunks).flat() };
 };
 
-const buildPrompt = (files: DiffFile[], basis: ReviewBasis): string =>
-  [
+export const buildPrompt = (
+  chunk: DiffFile[],
+  basis: ReviewBasis,
+  totalFiles: number,
+  overflow: DiffFile[],
+): string => {
+  const lines = [
     buildInstructions(basis),
     '',
     buildBasisSection(basis),
     '',
-    `Changed files in this pull request (${files.length}):`,
-    renderChangedFiles(files),
-  ].join('\n');
+    `Changed files in this pull request (${totalFiles} total; ${chunk.length} inlined below):`,
+    chunk.map(renderChangedFile).join('\n\n'),
+  ];
+  if (overflow.length > 0) {
+    lines.push(
+      '',
+      'These additional changed files are NOT inlined here. Open and read them directly in the ' +
+        'checked-out repository to review their current contents before finalizing findings:',
+      `- ${overflow.map((file) => file.path).join('\n- ')}`,
+    );
+  }
+  return lines.join('\n');
+};
 
 const stripCodeFences = (content: string): string => {
   const trimmed = content.trim();
@@ -138,7 +148,7 @@ const extractJsonObject = (text: string): string => {
   return text.slice(start, end + 1);
 };
 
-const parseContent = (content: string, fallbackFile: string) => {
+const parseContent = (content: string, fallbackFile: string): Finding[] => {
   const json = extractJsonObject(stripCodeFences(content));
   if (!json) return [];
   try {
@@ -149,29 +159,47 @@ const parseContent = (content: string, fallbackFile: string) => {
   }
 };
 
-const buildArgs = (prompt: string): string[] => {
-  const args = ['--print', '--output-format', 'text', '--mode', 'ask', '--trust'];
-  const model = getModelId();
-  if (model) args.push('--model', model);
-  args.push(prompt);
-  return args;
+const findingKey = (finding: Finding): string =>
+  `${finding.ruleId}\u0000${finding.file}\u0000${finding.title}`;
+
+export const mergeFindings = (findings: Finding[]): Finding[] => {
+  const seen = new Set<string>();
+  const merged: Finding[] = [];
+  for (const finding of findings) {
+    const key = findingKey(finding);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(finding);
+  }
+  return merged;
 };
 
 export const analyzeChanges = async (
   files: DiffFile[],
   basis: ReviewBasis,
 ): Promise<FileAnalysis> => {
-  const fallbackFile = files[0]?.path ?? '';
-  try {
-    const { stdout } = await execFileAsync(AGENT_BIN, buildArgs(buildPrompt(files, basis)), {
-      cwd: getRepoRoot(),
-      encoding: 'utf8',
-      maxBuffer: MAX_BUFFER,
-      timeout: getTimeoutMs(),
-    });
-    return { findings: parseContent(stdout, fallbackFile) };
-  } catch (error: unknown) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`Cursor agent analysis failed: ${detail}`);
+  const { chunks, overflow } = planChunks(files, getMaxChunks());
+  const findings: Finding[] = [];
+  const errors: string[] = [];
+
+  for (let index = 0; index < chunks.length; index += 1) {
+    const chunk = chunks[index] ?? [];
+    // Only the last chunk carries the overflow read-list so it is mentioned exactly once.
+    const chunkOverflow = index === chunks.length - 1 ? overflow : [];
+    const result = await runAgent(buildPrompt(chunk, basis, files.length, chunkOverflow));
+    if (!result.ok) {
+      errors.push(result.error);
+      continue;
+    }
+    findings.push(...parseContent(result.stdout, chunk[0]?.path ?? ''));
   }
+
+  if (errors.length > 0 && findings.length === 0) {
+    throw new Error(`Cursor agent analysis failed: ${errors[0]}`);
+  }
+  if (errors.length > 0) {
+    console.warn(`AI review: ${errors.length} of ${chunks.length} chunk(s) failed; reporting partial results.`);
+  }
+
+  return { findings: mergeFindings(findings), overflowCount: overflow.length };
 };

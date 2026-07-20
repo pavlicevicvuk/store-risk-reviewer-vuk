@@ -1,31 +1,12 @@
-import { execFile } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
-import { promisify } from 'node:util';
 
+import { getModelLabel, runAgent } from './agentRunner.ts';
 import { serializeRulesForPrompt, RULES_VERSION } from './rules.ts';
 import { scoreFindings } from './score.ts';
 import type { Finding } from './types.ts';
 import { extractFindingsPayload } from './validate.ts';
 
-const execFileAsync = promisify(execFile);
-
-const AGENT_BIN = process.env.AI_REVIEW_AGENT_BIN || 'cursor-agent';
-const MAX_BUFFER = 64 * 1024 * 1024;
-// A full-repo agentic scan can run long; default to 25 minutes.
-const DEFAULT_TIMEOUT_MS = 1_500_000;
-
 const AUDIT_MARKER = '<!-- ai-audit-report -->';
-
-const getTimeoutMs = (): number => {
-  const raw = Number(process.env.AI_REVIEW_AGENT_TIMEOUT_MS);
-  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_TIMEOUT_MS;
-};
-
-const getRepoRoot = (): string => process.env.AI_REVIEW_REPO_ROOT || process.cwd();
-
-const getModelId = (): string | undefined => process.env.AI_REVIEW_MODEL || undefined;
-
-const getModelLabel = (): string => getModelId() ?? 'Cursor account default';
 
 const getOutputPath = (): string => process.env.AI_AUDIT_OUTPUT || 'ai_audit_report.md';
 
@@ -79,14 +60,6 @@ const parseContent = (content: string): Finding[] => {
   } catch {
     return [];
   }
-};
-
-const buildArgs = (prompt: string): string[] => {
-  const args = ['--print', '--output-format', 'text', '--mode', 'ask', '--trust'];
-  const model = getModelId();
-  if (model) args.push('--model', model);
-  args.push(prompt);
-  return args;
 };
 
 const SEVERITY_ORDER: Record<Finding['severity'], number> = {
@@ -156,14 +129,12 @@ const main = async (): Promise<void> => {
   }
 
   const startedAt = Date.now();
-  const { stdout } = await execFileAsync(AGENT_BIN, buildArgs(buildPrompt()), {
-    cwd: getRepoRoot(),
-    encoding: 'utf8',
-    maxBuffer: MAX_BUFFER,
-    timeout: getTimeoutMs(),
-  });
+  const result = await runAgent(buildPrompt());
+  if (!result.ok) {
+    throw new Error(`Cursor agent audit failed: ${result.error}`);
+  }
   const elapsedMs = Date.now() - startedAt;
-  const findings = parseContent(stdout);
+  const findings = parseContent(result.stdout);
   const report = renderReport(findings, elapsedMs);
 
   writeFileSync(getOutputPath(), report);

@@ -47,6 +47,7 @@ export type Finding = {
 
 export type FileAnalysis = {
   findings: Finding[];
+  overflowCount: number;
 };
 
 export type RiskSummary = {
@@ -58,6 +59,7 @@ export type RiskSummary = {
 export type ReportInput = RiskSummary & {
   findings: Finding[];
   filesAnalyzed: number;
+  overflowCount: number;
   agentRequests: number;
   fromCache: boolean;
   model: string;

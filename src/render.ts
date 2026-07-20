@@ -9,10 +9,10 @@ const BASIS_HEADING: Record<ReviewBasis, string> = {
   docs: 'AI App Store Rejection Risk Review (Official Guidelines)',
 };
 
-const BASIS_SOURCE_LINE: Record<ReviewBasis, (input: ReportInput) => string> = {
-  rules: (input) => `- Basis: predefined rule pack \`${input.rulesVersion}\``,
-  docs: (input) => `- Basis: official Apple/Google guideline corpus \`${input.corpusVersion}\``,
-};
+const basisSourceLine = (basis: ReviewBasis, rulesVersion: string, corpusVersion: string): string =>
+  basis === REVIEW_BASIS.rules
+    ? `- Basis: predefined rule pack \`${rulesVersion}\``
+    : `- Basis: official Apple/Google guideline corpus \`${corpusVersion}\``;
 
 const RISK_BADGE: Record<RiskLevel, string> = {
   Low: 'Low',
@@ -85,8 +85,11 @@ const runDetails = (input: ReportInput): string =>
     '<summary>Run details &amp; usage</summary>',
     '',
     `- Engine: Cursor agent (\`${input.model}\`), whole-repository context`,
-    BASIS_SOURCE_LINE[input.basis](input),
+    basisSourceLine(input.basis, input.rulesVersion, input.corpusVersion),
     `- Changed files reviewed: ${input.filesAnalyzed}`,
+    ...(input.overflowCount > 0
+      ? [`- Large diff: ${input.overflowCount} file(s) handed to the agent to read directly`]
+      : []),
     `- Cursor requests: ${input.agentRequests}`,
     `- Served from cache: ${input.fromCache ? 'yes' : 'no'}`,
     '',
@@ -107,6 +110,30 @@ export const renderReport = (input: ReportInput): string => {
   return `${body.join('\n')}\n`;
 };
 
+export const renderFailure = (
+  basis: ReviewBasis,
+  model: string,
+  rulesVersion: string,
+  corpusVersion: string,
+  message: string,
+): string =>
+  [
+    header(basis),
+    '',
+    ':warning: The AI review could not complete, so no risk assessment is available for this commit.',
+    '',
+    '<details>',
+    '<summary>Failure details</summary>',
+    '',
+    `- Engine: Cursor agent (\`${model}\`)`,
+    basisSourceLine(basis, rulesVersion, corpusVersion),
+    `- Error: ${message}`,
+    '',
+    'This is a tooling failure, not a review result. Re-run the job or check the workflow logs.',
+    '</details>',
+    '',
+  ].join('\n');
+
 export const renderNoRelevantFiles = (
   basis: ReviewBasis,
   rulesVersion: string,
@@ -122,9 +149,7 @@ export const renderNoRelevantFiles = (
     '<summary>Run details</summary>',
     '',
     `- Engine: Cursor agent (\`${model}\`)`,
-    basis === REVIEW_BASIS.rules
-      ? `- Basis: predefined rule pack \`${rulesVersion}\``
-      : `- Basis: official Apple/Google guideline corpus \`${corpusVersion}\``,
+    basisSourceLine(basis, rulesVersion, corpusVersion),
     '- Cursor requests: 0',
     '</details>',
     '',
