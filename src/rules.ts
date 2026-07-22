@@ -1,7 +1,7 @@
 import { getExcerptsForRule } from './corpus.ts';
 import type { Rule } from './types.ts';
 
-export const RULES_VERSION = '2026-06-24.1';
+export const RULES_VERSION = '2026-07-22.1';
 
 export const RULES: Rule[] = [
   {
@@ -111,6 +111,18 @@ export const RULES: Rule[] = [
       'Declares a foreground service without an android:foregroundServiceType and matching FOREGROUND_SERVICE_* permission, or an unsupported type.',
     remediation:
       'Add the correct foregroundServiceType and FOREGROUND_SERVICE_* permission, and ensure the type is eligible for your use case.',
+  },
+  {
+    id: 'android-target-sdk',
+    title: 'Target API level below Google Play requirement',
+    platform: 'android',
+    category: 'Configuration',
+    defaultSeverity: 'high',
+    guidelineRef: 'Google Play target API level requirement',
+    signals:
+      'Sets or lowers targetSdkVersion / targetSdk below the current Google Play minimum, or changes build.gradle without raising targetSdk to meet Play submission requirements.',
+    remediation:
+      'Raise targetSdkVersion to meet the current Google Play requirement and address behavior changes for the new API level before submitting.',
   },
   {
     id: 'data-safety-collection',

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const CORPUS_VERSION = '2026-06-30.1';
+export const CORPUS_VERSION = '2026-07-22.1';
 
 export type GuidelineChunk = {
   id: string;
