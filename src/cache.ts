@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { Finding } from './types.ts';
@@ -31,7 +31,12 @@ export const readCache = (key: string, fallbackFile: string): Finding[] | undefi
   }
 };
 
+// Write to a unique temp file then rename: rename is atomic on the same filesystem, so a
+// reader never observes a half-written entry even when several keys are persisted concurrently.
 export const writeCache = (key: string, findings: Finding[]): void => {
   mkdirSync(CACHE_DIR, { recursive: true });
-  writeFileSync(join(CACHE_DIR, `${key}.json`), JSON.stringify({ findings }));
+  const target = join(CACHE_DIR, `${key}.json`);
+  const temp = join(CACHE_DIR, `${key}.${randomUUID()}.tmp`);
+  writeFileSync(temp, JSON.stringify({ findings }));
+  renameSync(temp, target);
 };

@@ -94,7 +94,8 @@ const runDetails = (input: ReportInput): string =>
     `- Served from cache: ${input.fromCache ? 'yes' : 'no'}`,
     '',
     'The agent reads the full checked-out repository for context, not just the diff.',
-    'Usage is billed to the configured Cursor account; results are cached per commit to avoid re-running the agent.',
+    'Usage is billed to the configured Cursor account; code findings are cached per file (by content) and ' +
+      'configuration/metadata findings per repository state, so unchanged files skip the agent.',
     'Report-only (v1). Build-artifact and submission-log analysis are planned for later phases.',
     '</details>',
   ].join('\n');

@@ -20,6 +20,9 @@ export type DiffFile = {
   path: string;
   status: string;
   patch: string;
+  // Git blob SHA of the file at the reviewed head. Content-addressed, so it is stable across
+  // commits/rebases whenever the file content is unchanged; empty when git could not resolve it.
+  blobSha: string;
 };
 
 export type Rule = {
@@ -48,6 +51,7 @@ export type Finding = {
 export type FileAnalysis = {
   findings: Finding[];
   overflowCount: number;
+  requests: number;
 };
 
 export type RiskSummary = {

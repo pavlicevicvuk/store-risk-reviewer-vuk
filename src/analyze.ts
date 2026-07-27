@@ -20,6 +20,17 @@ const getMaxChunks = (): number => {
 // Bump when the review strategy changes so cached results are invalidated.
 export const REVIEW_STRATEGY = 'bounded-chunked-v2';
 
+// Everything that changes which files land in a prompt (and therefore the findings) must be
+// part of the cache key. Folding the chunk cap and diff budgets in here means tuning them
+// invalidates stale cache entries automatically instead of silently serving mismatched results.
+export const strategySignature = (): string =>
+  [
+    REVIEW_STRATEGY,
+    `chunks=${getMaxChunks()}`,
+    `patch=${MAX_PATCH_CHARS}`,
+    `inline=${INLINE_BUDGET_CHARS}`,
+  ].join('|');
+
 const isReviewBasis = (value: string): value is ReviewBasis =>
   value === REVIEW_BASIS.rules || value === REVIEW_BASIS.docs;
 
@@ -201,5 +212,5 @@ export const analyzeChanges = async (
     console.warn(`AI review: ${errors.length} of ${chunks.length} chunk(s) failed; reporting partial results.`);
   }
 
-  return { findings: mergeFindings(findings), overflowCount: overflow.length };
+  return { findings: mergeFindings(findings), overflowCount: overflow.length, requests: chunks.length };
 };

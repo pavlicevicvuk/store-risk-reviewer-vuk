@@ -11,6 +11,7 @@ const makeFiles = (count: number, patchChars: number): DiffFile[] =>
     path: `app/feature/module${index}/index.ts`,
     status: 'M',
     patch: `@@ synthetic patch ${index} @@\n${'+ const value = 1;\n'.repeat(Math.ceil(patchChars / 20))}`,
+    blobSha: `blob${index}`,
   }));
 
 const makeFinding = (overrides: Partial<Finding>): Finding => ({
