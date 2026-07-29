@@ -3,6 +3,7 @@ import { writeFileSync } from 'node:fs';
 import { analyzeChanges, getModelLabel, getReviewBasis } from './analyze.ts';
 import { collectDiff } from './collectDiff.ts';
 import { CORPUS_VERSION } from './corpus.ts';
+import { refreshCorpus } from './ingestGuidelines.ts';
 import { renderFailure, renderNoRelevantFiles, renderReport } from './render.ts';
 import { RULES_VERSION } from './rules.ts';
 import { scoreFindings } from './score.ts';
@@ -20,10 +21,29 @@ const writeReport = (path: string, content: string): void => {
   console.log(content);
 };
 
+const maybeRefreshCorpus = async (): Promise<void> => {
+  if ((process.env.AI_REVIEW_SKIP_CORPUS_REFRESH || '').trim() === '1') {
+    console.log('Corpus refresh skipped (AI_REVIEW_SKIP_CORPUS_REFRESH=1).');
+    return;
+  }
+
+  try {
+    await refreshCorpus();
+  } catch (error: unknown) {
+    console.warn(
+      `Corpus refresh failed; continuing with checked-in excerpts: ${
+        error instanceof Error ? error.message : error
+      }`,
+    );
+  }
+};
+
 const main = async (): Promise<void> => {
   const model = getModelLabel();
   const basis = getReviewBasis();
   const outputPath = getOutputPath();
+
+  await maybeRefreshCorpus();
 
   const changedFiles = collectDiff(getBaseRef(), getHeadRef());
   const relevantFiles = selectFiles(changedFiles);

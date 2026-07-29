@@ -1,6 +1,7 @@
 import { writeFileSync } from 'node:fs';
 
 import { getModelLabel, runAgent } from './agentRunner.ts';
+import { refreshCorpus } from './ingestGuidelines.ts';
 import { serializeRulesForPrompt, RULES_VERSION } from './rules.ts';
 import { scoreFindings } from './score.ts';
 import type { Finding } from './types.ts';
@@ -126,6 +127,18 @@ const renderReport = (findings: Finding[], elapsedMs: number): string => {
 const main = async (): Promise<void> => {
   if (!process.env.CURSOR_API_KEY) {
     throw new Error('CURSOR_API_KEY is not set; cannot run the Cursor agent.');
+  }
+
+  if ((process.env.AI_REVIEW_SKIP_CORPUS_REFRESH || '').trim() !== '1') {
+    try {
+      await refreshCorpus();
+    } catch (error: unknown) {
+      console.warn(
+        `Corpus refresh failed; continuing with checked-in excerpts: ${
+          error instanceof Error ? error.message : error
+        }`,
+      );
+    }
   }
 
   const startedAt = Date.now();

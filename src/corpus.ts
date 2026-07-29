@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const CORPUS_VERSION = '2026-07-22.1';
+export const CORPUS_VERSION = '2026-07-29.1';
 
 export type GuidelineChunk = {
   id: string;
@@ -34,6 +34,10 @@ const isChunk = (value: unknown): value is GuidelineChunk => {
 };
 
 let cache: GuidelineChunk[] | undefined;
+
+export const clearCorpusCache = (): void => {
+  cache = undefined;
+};
 
 export const loadCorpus = (): GuidelineChunk[] => {
   if (cache) return cache;
