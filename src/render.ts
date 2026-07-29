@@ -91,11 +91,9 @@ const runDetails = (input: ReportInput): string =>
       ? [`- Large diff: ${input.overflowCount} file(s) handed to the agent to read directly`]
       : []),
     `- Cursor requests: ${input.agentRequests}`,
-    `- Served from cache: ${input.fromCache ? 'yes' : 'no'}`,
     '',
     'The agent reads the full checked-out repository for context, not just the diff.',
-    'Usage is billed to the configured Cursor account; code findings are cached per file (by content) and ' +
-      'configuration/metadata findings per repository state, so unchanged files skip the agent.',
+    'Usage is billed to the configured Cursor account.',
     'Report-only (v1). Build-artifact and submission-log analysis are planned for later phases.',
     '</details>',
   ].join('\n');
