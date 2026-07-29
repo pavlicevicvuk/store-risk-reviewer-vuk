@@ -16,10 +16,15 @@ export const SAFE_ARG_LIMIT = 100000;
 
 export const getRepoRoot = (): string => process.env.AI_REVIEW_REPO_ROOT || process.cwd();
 
-// Undefined means "let the Cursor account default model decide".
-export const getModelId = (): string | undefined => process.env.AI_REVIEW_MODEL || undefined;
+// Override anytime with AI_REVIEW_MODEL.
+export const DEFAULT_MODEL = 'composer-2.5';
 
-export const getModelLabel = (): string => getModelId() ?? 'Cursor account default';
+export const getModelId = (): string => {
+  const fromEnv = process.env.AI_REVIEW_MODEL?.trim();
+  return fromEnv || DEFAULT_MODEL;
+};
+
+export const getModelLabel = (): string => getModelId();
 
 export const getTimeoutMs = (): number => {
   const raw = Number(process.env.AI_REVIEW_AGENT_TIMEOUT_MS);
@@ -37,10 +42,17 @@ export const buildReadInstruction = (promptPath: string): string =>
   '(no prose, no markdown, no code fences).';
 
 export const buildInvocationArgs = (instruction: string): string[] => {
-  const args = ['--print', '--output-format', 'text', '--mode', 'ask', '--trust'];
-  const model = getModelId();
-  if (model) args.push('--model', model);
-  args.push(instruction);
+  const args = [
+    '--print',
+    '--output-format',
+    'text',
+    '--mode',
+    'ask',
+    '--trust',
+    '--model',
+    getModelId(),
+    instruction,
+  ];
   return args;
 };
 
