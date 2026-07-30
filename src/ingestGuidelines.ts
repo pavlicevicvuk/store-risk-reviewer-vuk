@@ -35,7 +35,6 @@ const FIELD_ORDER: (keyof GuidelineChunk)[] = [
   'section',
   'title',
   'url',
-  'ruleIds',
   'text',
 ];
 

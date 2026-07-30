@@ -1,8 +1,8 @@
 import { writeFileSync } from 'node:fs';
 
 import { getModelLabel, runAgent } from './agentRunner.ts';
+import { CORPUS_VERSION, serializeGuidelinesForPrompt } from './corpus.ts';
 import { refreshCorpus } from './ingestGuidelines.ts';
-import { serializeRulesForPrompt, RULES_VERSION } from './rules.ts';
 import { scoreFindings } from './score.ts';
 import type { Finding } from './types.ts';
 import { extractFindingsPayload } from './validate.ts';
@@ -15,13 +15,14 @@ const INSTRUCTIONS = [
   'You are a mobile release compliance reviewer for a React Native app.',
   'The full repository is checked out in your current working directory and you have READ access to all of it.',
   'This is a WHOLE-REPOSITORY audit, not a diff review: assess the entire app for iOS App Store',
-  'or Google Play rejection risk using ONLY the provided rule pack.',
+  'or Google Play rejection risk using ONLY the provided official Apple/Google guideline excerpts.',
+  'Set each finding\'s guidelineId to the matching excerpt id and guidelineRef to its guideline section.',
   'Explore the repository as needed: Info.plist files, entitlements, PrivacyInfo.xcprivacy,',
   'AndroidManifest.xml, build.gradle, Podfile, package.json, and the app source under app/.',
-  'For absence-based rules, confirm the mitigation is genuinely absent across the repo before flagging.',
+  'For absence-based issues, confirm the mitigation is genuinely absent across the repo before flagging.',
   'Be precise and conservative: only report concrete evidence. Do not modify anything.',
   'Respond with ONLY a single JSON object and nothing else (no prose, no markdown, no code fences):',
-  '{"findings": Finding[]} where each Finding has ruleId, platform ("ios"|"android"|"both"),',
+  '{"findings": Finding[]} where each Finding has guidelineId, platform ("ios"|"android"|"both"),',
   'category ("Code"|"Configuration"|"Metadata"|"Compliance"),',
   'severity ("low"|"medium"|"high"|"critical"), title, file, evidence, guidelineRef, and remediation.',
   'If there is no risk, return {"findings": []}.',
@@ -31,9 +32,8 @@ const buildPrompt = (): string =>
   [
     INSTRUCTIONS,
     '',
-    'Rule pack (only flag issues that match one of these rules).',
-    'Lines marked "Official" quote the current Apple/Google guideline text and are authoritative:',
-    serializeRulesForPrompt(),
+    'Official Apple/Google guideline excerpts (only flag issues that violate one of these):',
+    serializeGuidelinesForPrompt(),
   ].join('\n');
 
 const stripCodeFences = (content: string): string => {
@@ -116,7 +116,7 @@ const renderReport = (findings: Finding[], elapsedMs: number): string => {
     '<summary>Run details</summary>',
     '',
     `- Engine: Cursor agent (\`${getModelLabel()}\`), whole-repository audit`,
-    `- Rule pack: \`${RULES_VERSION}\``,
+    `- Basis: official Apple/Google guideline corpus \`${CORPUS_VERSION}\``,
     `- Scan time: ${(elapsedMs / 1000).toFixed(1)}s`,
     '</details>',
     '',

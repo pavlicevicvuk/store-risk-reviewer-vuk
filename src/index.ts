@@ -1,11 +1,10 @@
 import { writeFileSync } from 'node:fs';
 
-import { analyzeChanges, getModelLabel, getReviewBasis } from './analyze.ts';
+import { analyzeChanges, getModelLabel } from './analyze.ts';
 import { collectDiff } from './collectDiff.ts';
 import { CORPUS_VERSION } from './corpus.ts';
 import { refreshCorpus } from './ingestGuidelines.ts';
 import { renderFailure, renderNoRelevantFiles, renderReport } from './render.ts';
-import { RULES_VERSION } from './rules.ts';
 import { scoreFindings } from './score.ts';
 import { selectFiles } from './selectFiles.ts';
 
@@ -40,7 +39,6 @@ const maybeRefreshCorpus = async (): Promise<void> => {
 
 const main = async (): Promise<void> => {
   const model = getModelLabel();
-  const basis = getReviewBasis();
   const outputPath = getOutputPath();
 
   await maybeRefreshCorpus();
@@ -49,7 +47,7 @@ const main = async (): Promise<void> => {
   const relevantFiles = selectFiles(changedFiles);
 
   if (relevantFiles.length === 0) {
-    writeReport(outputPath, renderNoRelevantFiles(basis, RULES_VERSION, CORPUS_VERSION, model));
+    writeReport(outputPath, renderNoRelevantFiles(CORPUS_VERSION, model));
     console.log('AI review: no store-relevant files changed.');
     return;
   }
@@ -58,7 +56,7 @@ const main = async (): Promise<void> => {
     throw new Error('CURSOR_API_KEY is not set; cannot run the Cursor agent.');
   }
 
-  const analysis = await analyzeChanges(relevantFiles, basis);
+  const analysis = await analyzeChanges(relevantFiles);
   const risk = scoreFindings(analysis.findings);
 
   writeReport(
@@ -70,8 +68,6 @@ const main = async (): Promise<void> => {
       overflowCount: analysis.overflowCount,
       agentRequests: analysis.requests,
       model,
-      basis,
-      rulesVersion: RULES_VERSION,
       corpusVersion: CORPUS_VERSION,
     }),
   );
@@ -82,14 +78,14 @@ const main = async (): Promise<void> => {
   );
 };
 
-// Never fail silently: on any error, leave a clear explanation on the PR (upserted under
-// the same basis marker) and still exit non-zero so the check surfaces the failure.
+// Never fail silently: on any error, leave a clear explanation on the PR and still exit
+// non-zero so the check surfaces the failure.
 main().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
   try {
     writeReport(
       getOutputPath(),
-      renderFailure(getReviewBasis(), getModelLabel(), RULES_VERSION, CORPUS_VERSION, message),
+      renderFailure(getModelLabel(), CORPUS_VERSION, message),
     );
   } catch (writeError: unknown) {
     console.error(writeError instanceof Error ? writeError.message : writeError);

@@ -6,35 +6,14 @@ export type RiskLevel = 'Low' | 'Medium' | 'High' | 'Critical';
 
 export type FindingCategory = 'Code' | 'Configuration' | 'Metadata' | 'Compliance';
 
-// What the reviewer is allowed to judge against: the curated rule pack only, or the
-// official Apple/Google guideline excerpts only. Kept as an `as const` map (no enum) so
-// stripping types leaves valid JS.
-export const REVIEW_BASIS = {
-  rules: 'rules',
-  docs: 'docs',
-} as const;
-
-export type ReviewBasis = (typeof REVIEW_BASIS)[keyof typeof REVIEW_BASIS];
-
 export type DiffFile = {
   path: string;
   status: string;
   patch: string;
 };
 
-export type Rule = {
-  id: string;
-  title: string;
-  platform: Platform;
-  category: FindingCategory;
-  defaultSeverity: Severity;
-  guidelineRef: string;
-  signals: string;
-  remediation: string;
-};
-
 export type Finding = {
-  ruleId: string;
+  guidelineId: string;
   platform: Platform;
   category: FindingCategory;
   severity: Severity;
@@ -63,7 +42,5 @@ export type ReportInput = RiskSummary & {
   overflowCount: number;
   agentRequests: number;
   model: string;
-  basis: ReviewBasis;
-  rulesVersion: string;
   corpusVersion: string;
 };

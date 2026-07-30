@@ -1,6 +1,6 @@
 import { buildPrompt, mergeFindings, planChunks } from './analyze.ts';
 import { buildInvocationArgs, buildReadInstruction, SAFE_ARG_LIMIT } from './agentRunner.ts';
-import { REVIEW_BASIS, type DiffFile, type Finding } from './types.ts';
+import type { DiffFile, Finding } from './types.ts';
 
 const assert = (condition: boolean, message: string): void => {
   if (!condition) throw new Error(`Selftest failed: ${message}`);
@@ -14,7 +14,7 @@ const makeFiles = (count: number, patchChars: number): DiffFile[] =>
   }));
 
 const makeFinding = (overrides: Partial<Finding>): Finding => ({
-  ruleId: 'ios-usage-descriptions',
+  guidelineId: 'apple-5.1.1',
   platform: 'ios',
   category: 'Configuration',
   severity: 'high',
@@ -51,7 +51,7 @@ assert(largestArg < SAFE_ARG_LIMIT, `largest argv value ${largestArg} exceeds ${
 
 // Each chunk prompt should be bounded even though it embeds diffs.
 for (const chunk of chunks) {
-  const prompt = buildPrompt(chunk, REVIEW_BASIS.rules, files.length, overflow);
+  const prompt = buildPrompt(chunk, files.length, overflow);
   assert(prompt.length < 300_000, `chunk prompt too large: ${prompt.length}`);
 }
 

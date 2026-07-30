@@ -23,7 +23,7 @@ export const toFinding = (value: unknown, fallbackFile: string): Finding | undef
   if (!title) return undefined;
   const file = stringField(value.file).trim();
   return {
-    ruleId: stringField(value.ruleId).trim() || 'unknown',
+    guidelineId: stringField(value.guidelineId).trim() || 'unknown',
     platform: oneOf(value.platform, PLATFORMS) ? value.platform : 'both',
     category: oneOf(value.category, CATEGORIES) ? value.category : 'Compliance',
     severity: oneOf(value.severity, SEVERITIES) ? value.severity : 'medium',

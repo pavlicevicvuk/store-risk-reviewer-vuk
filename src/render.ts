@@ -1,18 +1,10 @@
-import { REVIEW_BASIS, type Finding, type FindingCategory, type ReportInput, type ReviewBasis, type RiskLevel } from './types.ts';
+import type { Finding, FindingCategory, ReportInput, RiskLevel } from './types.ts';
 
-// Each basis posts its own PR comment; the marker keeps the two comments distinct so the
-// upsert in CI edits the right one instead of clobbering the other.
-export const reportMarker = (basis: ReviewBasis): string => `<!-- ai-review-report-${basis} -->`;
+const REPORT_MARKER = '<!-- ai-review-report-docs -->';
+const REPORT_HEADING = 'AI App Store Rejection Risk Review (Official Guidelines)';
 
-const BASIS_HEADING: Record<ReviewBasis, string> = {
-  rules: 'AI App Store Rejection Risk Review (Predefined Rules)',
-  docs: 'AI App Store Rejection Risk Review (Official Guidelines)',
-};
-
-const basisSourceLine = (basis: ReviewBasis, rulesVersion: string, corpusVersion: string): string =>
-  basis === REVIEW_BASIS.rules
-    ? `- Basis: predefined rule pack \`${rulesVersion}\``
-    : `- Basis: official Apple/Google guideline corpus \`${corpusVersion}\``;
+const corpusSourceLine = (corpusVersion: string): string =>
+  `- Basis: official Apple/Google guideline corpus \`${corpusVersion}\``;
 
 const RISK_BADGE: Record<RiskLevel, string> = {
   Low: 'Low',
@@ -41,8 +33,7 @@ const PLATFORM_LABEL: Record<Finding['platform'], string> = {
   both: 'iOS + Android',
 };
 
-const header = (basis: ReviewBasis): string =>
-  `${reportMarker(basis)}\n## ${BASIS_HEADING[basis]}`;
+const header = (): string => `${REPORT_MARKER}\n## ${REPORT_HEADING}`;
 
 const riskTable = (input: ReportInput): string =>
   [
@@ -85,7 +76,7 @@ const runDetails = (input: ReportInput): string =>
     '<summary>Run details &amp; usage</summary>',
     '',
     `- Engine: Cursor agent (\`${input.model}\`), whole-repository context`,
-    basisSourceLine(input.basis, input.rulesVersion, input.corpusVersion),
+    corpusSourceLine(input.corpusVersion),
     `- Changed files reviewed: ${input.filesAnalyzed}`,
     ...(input.overflowCount > 0
       ? [`- Large diff: ${input.overflowCount} file(s) handed to the agent to read directly`]
@@ -99,7 +90,7 @@ const runDetails = (input: ReportInput): string =>
   ].join('\n');
 
 export const renderReport = (input: ReportInput): string => {
-  const body = [header(input.basis), '', riskTable(input), ''];
+  const body = [header(), '', riskTable(input), ''];
   if (input.findings.length === 0) {
     body.push('No app store rejection risks detected in the changed files.');
   } else {
@@ -110,14 +101,12 @@ export const renderReport = (input: ReportInput): string => {
 };
 
 export const renderFailure = (
-  basis: ReviewBasis,
   model: string,
-  rulesVersion: string,
   corpusVersion: string,
   message: string,
 ): string =>
   [
-    header(basis),
+    header(),
     '',
     ':warning: The AI review could not complete, so no risk assessment is available for this commit.',
     '',
@@ -125,7 +114,7 @@ export const renderFailure = (
     '<summary>Failure details</summary>',
     '',
     `- Engine: Cursor agent (\`${model}\`)`,
-    basisSourceLine(basis, rulesVersion, corpusVersion),
+    corpusSourceLine(corpusVersion),
     `- Error: ${message}`,
     '',
     'This is a tooling failure, not a review result. Re-run the job or check the workflow logs.',
@@ -134,13 +123,11 @@ export const renderFailure = (
   ].join('\n');
 
 export const renderNoRelevantFiles = (
-  basis: ReviewBasis,
-  rulesVersion: string,
   corpusVersion: string,
   model: string,
 ): string =>
   [
-    header(basis),
+    header(),
     '',
     'No store-relevant files changed in this merge, so no risk analysis was run.',
     '',
@@ -148,7 +135,7 @@ export const renderNoRelevantFiles = (
     '<summary>Run details</summary>',
     '',
     `- Engine: Cursor agent (\`${model}\`)`,
-    basisSourceLine(basis, rulesVersion, corpusVersion),
+    corpusSourceLine(corpusVersion),
     '- Cursor requests: 0',
     '</details>',
     '',

@@ -1,7 +1,6 @@
 import { serializeGuidelinesForPrompt } from './corpus.ts';
 import { runAgent, getModelLabel } from './agentRunner.ts';
-import { serializeRuleSignalsForPrompt } from './rules.ts';
-import { REVIEW_BASIS, type DiffFile, type FileAnalysis, type Finding, type ReviewBasis } from './types.ts';
+import type { DiffFile, FileAnalysis, Finding } from './types.ts';
 import { extractFindingsPayload } from './validate.ts';
 
 export { getModelLabel };
@@ -17,16 +16,10 @@ const getMaxChunks = (): number => {
   return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : 3;
 };
 
-const isReviewBasis = (value: string): value is ReviewBasis =>
-  value === REVIEW_BASIS.rules || value === REVIEW_BASIS.docs;
-
-export const getReviewBasis = (): ReviewBasis => {
-  const raw = (process.env.AI_REVIEW_BASIS || '').trim().toLowerCase();
-  return isReviewBasis(raw) ? raw : REVIEW_BASIS.rules;
-};
-
-const COMMON_INSTRUCTIONS = [
+const INSTRUCTIONS = [
   'You are a mobile release compliance reviewer for a React Native app.',
+  'Decide whether the pull request introduces iOS App Store or Google Play rejection risk, using ONLY the official Apple/Google guideline excerpts below.',
+  'Set each finding\'s guidelineRef to the guideline section it violates (e.g. "Apple 5.1.2") and guidelineId to the excerpt id it maps to.',
   'The full repository for this pull request is checked out in your current working directory and you have READ access to all of it.',
   'The changed files and their unified diffs are listed below as your starting point.',
   'Do NOT restrict yourself to the diff: open and read any other files in the repository you need for context',
@@ -36,34 +29,18 @@ const COMMON_INSTRUCTIONS = [
   'Correlate configuration with usage: a permission, background mode, or SDK is lower risk when the code clearly uses it for a qualifying feature.',
   'Be precise and conservative: only report a finding when you have concrete evidence. Do not modify anything.',
   'Respond with ONLY a single JSON object and nothing else (no prose, no markdown, no code fences):',
-  '{"findings": Finding[]} where each Finding has ruleId, platform ("ios"|"android"|"both"),',
+  '{"findings": Finding[]} where each Finding has guidelineId, platform ("ios"|"android"|"both"),',
   'category ("Code"|"Configuration"|"Metadata"|"Compliance"),',
   'severity ("low"|"medium"|"high"|"critical"), title, file (the repository path the risk lives in),',
   'evidence (short quote or specific description of what you found), guidelineRef, and remediation.',
   'If there is no risk, return {"findings": []}.',
-];
+].join(' ');
 
-const BASIS_INSTRUCTION: Record<ReviewBasis, string> = {
-  rules:
-    'Decide whether the pull request introduces iOS App Store or Google Play rejection risk, using ONLY the predefined rule pack below. ' +
-    "Set each finding's ruleId to the matching rule id and guidelineRef to that rule's reference.",
-  docs:
-    'Decide whether the pull request introduces iOS App Store or Google Play rejection risk, using ONLY the official Apple/Google guideline excerpts below. ' +
-    'Set each finding\'s guidelineRef to the guideline section it violates (e.g. "Apple 5.1.2") and ruleId to the excerpt id it maps to.',
-};
-
-const buildInstructions = (basis: ReviewBasis): string =>
-  [BASIS_INSTRUCTION[basis], ...COMMON_INSTRUCTIONS].join(' ');
-
-const buildBasisSection = (basis: ReviewBasis): string =>
-  basis === REVIEW_BASIS.rules
-    ? ['Predefined rule pack (only flag issues that match one of these rules):', serializeRuleSignalsForPrompt()].join(
-        '\n',
-      )
-    : [
-        'Official Apple/Google guideline excerpts (only flag issues that violate one of these):',
-        serializeGuidelinesForPrompt(),
-      ].join('\n');
+const buildGuidelinesSection = (): string =>
+  [
+    'Official Apple/Google guideline excerpts (only flag issues that violate one of these):',
+    serializeGuidelinesForPrompt(),
+  ].join('\n');
 
 const truncatePatch = (patch: string): string =>
   patch.length > MAX_PATCH_CHARS
@@ -106,14 +83,13 @@ export const planChunks = (
 
 export const buildPrompt = (
   chunk: DiffFile[],
-  basis: ReviewBasis,
   totalFiles: number,
   overflow: DiffFile[],
 ): string => {
   const lines = [
-    buildInstructions(basis),
+    INSTRUCTIONS,
     '',
-    buildBasisSection(basis),
+    buildGuidelinesSection(),
     '',
     `Changed files in this pull request (${totalFiles} total; ${chunk.length} inlined below):`,
     chunk.map(renderChangedFile).join('\n\n'),
@@ -157,7 +133,7 @@ const parseContent = (content: string, fallbackFile: string): Finding[] => {
 };
 
 const findingKey = (finding: Finding): string =>
-  `${finding.ruleId}\u0000${finding.file}\u0000${finding.title}`;
+  `${finding.guidelineId}\u0000${finding.file}\u0000${finding.title}`;
 
 export const mergeFindings = (findings: Finding[]): Finding[] => {
   const seen = new Set<string>();
@@ -171,10 +147,7 @@ export const mergeFindings = (findings: Finding[]): Finding[] => {
   return merged;
 };
 
-export const analyzeChanges = async (
-  files: DiffFile[],
-  basis: ReviewBasis,
-): Promise<FileAnalysis> => {
+export const analyzeChanges = async (files: DiffFile[]): Promise<FileAnalysis> => {
   const { chunks, overflow } = planChunks(files, getMaxChunks());
   const findings: Finding[] = [];
   const errors: string[] = [];
@@ -183,7 +156,7 @@ export const analyzeChanges = async (
     const chunk = chunks[index] ?? [];
     // Only the last chunk carries the overflow read-list so it is mentioned exactly once.
     const chunkOverflow = index === chunks.length - 1 ? overflow : [];
-    const result = await runAgent(buildPrompt(chunk, basis, files.length, chunkOverflow));
+    const result = await runAgent(buildPrompt(chunk, files.length, chunkOverflow));
     if (!result.ok) {
       errors.push(result.error);
       continue;
