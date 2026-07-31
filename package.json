@@ -1,0 +1,21 @@
+{
+  "name": "store-risk-reviewer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Report-only PR bot that reviews React Native diffs against official Apple and Google guidelines.",
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "scripts": {
+    "selftest": "node --experimental-strip-types src/selftest.ts",
+    "review": "node --experimental-strip-types src/index.ts",
+    "audit": "node --experimental-strip-types src/audit.ts",
+    "corpus:refresh": "node --experimental-strip-types src/ingestGuidelines.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}

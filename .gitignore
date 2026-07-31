@@ -1,0 +1,8 @@
+node_modules/
+target/
+ai_review_report.md
+ai_review_docs_report.md
+ai_audit_report.md
+.ai-review-tmp-*/
+worker/.wrangler/
+.dev.vars
