@@ -1,0 +1,157 @@
+name: PR store-risk review
+
+# Driven by the Store Risk Reviewer GitHub App: its pull_request webhook reaches the
+# forwarder in worker/, which turns it into the repository_dispatch below. Nothing needs to
+# be installed in the target repository. repository_dispatch only fires for workflow files
+# on the default branch, so use workflow_dispatch when iterating on a branch.
+on:
+  repository_dispatch:
+    types: [pr_review]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number in the target repository
+        required: true
+        type: string
+      mode:
+        description: Which review to run (blank follows the branch prefix)
+        required: false
+        default: ''
+        type: choice
+        options: ['', docs, audit]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-review-${{ github.event.client_payload.pr || inputs.pr }}
+  cancel-in-progress: true
+
+env:
+  PR_NUMBER: ${{ github.event.client_payload.pr || inputs.pr }}
+  MODE_OVERRIDE: ${{ github.event.client_payload.mode || inputs.mode }}
+  REPORT_FILE: ${{ github.workspace }}/ai_review_report.md
+  SUMMARY_FILE: ${{ github.workspace }}/ai_review_summary.json
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    container: node:22.14.0
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out reviewer
+        uses: actions/checkout@v4
+        with:
+          path: reviewer
+
+      - name: Fix git container safe directory issue
+        run: git config --global --add safe.directory '*'
+
+      # Scoped to the target repo and read-only on contents: this token clones and comments,
+      # it must never be able to push.
+      - name: Mint app installation token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.REVIEWER_APP_ID }}
+          private-key: ${{ secrets.REVIEWER_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ReactNativeApp
+          permission-contents: read
+          permission-metadata: read
+          permission-pull-requests: write
+          permission-checks: write
+
+      # Metadata comes from the API rather than the webhook payload, so a forged or stale
+      # dispatch cannot steer the run at a different branch or commit.
+      - name: Resolve pull request
+        id: pr
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          AI_REVIEW_PR_NUMBER: ${{ env.PR_NUMBER }}
+          AI_REVIEW_MODE_OVERRIDE: ${{ env.MODE_OVERRIDE }}
+        run: node --experimental-strip-types reviewer/src/resolvePr.ts
+
+      - name: Clone target repository
+        if: steps.pr.outputs.run == 'true'
+        env:
+          TOKEN: ${{ steps.app-token.outputs.token }}
+          TARGET_REPO: ${{ steps.pr.outputs.target_repo }}
+          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          PR_NUMBER: ${{ env.PR_NUMBER }}
+        run: |
+          # Blobless clone keeps the full commit graph (needed for the base...head merge
+          # base) while skipping file contents until something actually reads them.
+          git clone --filter=blob:none --no-checkout \
+            "https://x-access-token:${TOKEN}@github.com/${TARGET_REPO}.git" target
+          cd target
+          # refs/pull/N/head lives in the base repo, so fork pull requests need no special case.
+          git fetch --filter=blob:none origin "refs/pull/${PR_NUMBER}/head" "${BASE_SHA}"
+          git checkout --detach "${HEAD_SHA}"
+          # The agent writes its prompt into a temp dir under the repo root; keep it from
+          # showing up as an untracked change so the target repo needs no .gitignore entry.
+          echo '.ai-review-tmp-*/' >> .git/info/exclude
+
+      - name: Install Cursor CLI
+        if: steps.pr.outputs.run == 'true'
+        run: |
+          curl https://cursor.com/install -fsS | bash
+          agent_path="$(find "$HOME" /usr/local /opt -name cursor-agent \( -type f -o -type l \) 2>/dev/null | head -1)"
+          if [ -z "$agent_path" ]; then echo "cursor-agent not found after install" >&2; exit 1; fi
+          ln -sf "$agent_path" /usr/local/bin/cursor-agent
+          cursor-agent --version
+
+      - name: Run diff review
+        id: review_docs
+        if: steps.pr.outputs.run == 'true' && steps.pr.outputs.mode == 'docs'
+        continue-on-error: true
+        working-directory: target
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          AI_REVIEW_MODEL: ${{ vars.AI_REVIEW_MODEL }}
+          AI_REVIEW_REPO_ROOT: ${{ github.workspace }}/target
+          AI_REVIEW_BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+          AI_REVIEW_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          AI_REVIEW_OUTPUT: ${{ env.REPORT_FILE }}
+          AI_REVIEW_SUMMARY: ${{ env.SUMMARY_FILE }}
+        run: node --experimental-strip-types ../reviewer/src/index.ts
+
+      - name: Run whole-repository audit
+        id: review_audit
+        if: steps.pr.outputs.run == 'true' && steps.pr.outputs.mode == 'audit'
+        continue-on-error: true
+        working-directory: target
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          AI_REVIEW_MODEL: ${{ vars.AI_REVIEW_MODEL }}
+          AI_REVIEW_REPO_ROOT: ${{ github.workspace }}/target
+          AI_AUDIT_OUTPUT: ${{ env.REPORT_FILE }}
+          AI_REVIEW_SUMMARY: ${{ env.SUMMARY_FILE }}
+        run: node --experimental-strip-types ../reviewer/src/audit.ts
+
+      - name: Post report to the pull request
+        if: always() && steps.pr.outputs.run == 'true'
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          AI_REVIEW_TARGET_REPO: ${{ steps.pr.outputs.target_repo }}
+          AI_REVIEW_PR_NUMBER: ${{ env.PR_NUMBER }}
+          AI_REVIEW_REPORT_FILE: ${{ env.REPORT_FILE }}
+          AI_REVIEW_SUMMARY: ${{ env.SUMMARY_FILE }}
+          AI_REVIEW_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          AI_REVIEW_CHECK_NAME: AI store-risk review
+        run: node --experimental-strip-types reviewer/src/postReport.ts
+
+      - name: Surface review failure
+        if: steps.review_docs.outcome == 'failure' || steps.review_audit.outcome == 'failure'
+        run: |
+          echo "The reviewer failed; its explanation was posted to the pull request." >&2
+          exit 1
+
+      - name: Report skip reason
+        if: steps.pr.outputs.run != 'true'
+        env:
+          REASON: ${{ steps.pr.outputs.reason }}
+        run: |
+          echo "Skipped: $REASON"

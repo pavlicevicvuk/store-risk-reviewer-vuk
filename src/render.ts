@@ -1,6 +1,6 @@
+import { DOCS_REPORT_MARKER } from './markers.ts';
 import type { Finding, FindingCategory, ReportInput, RiskLevel } from './types.ts';
 
-const REPORT_MARKER = '<!-- ai-review-report-docs -->';
 const REPORT_HEADING = 'AI App Store Rejection Risk Review (Official Guidelines)';
 
 const corpusSourceLine = (corpusVersion: string): string =>
@@ -33,7 +33,7 @@ const PLATFORM_LABEL: Record<Finding['platform'], string> = {
   both: 'iOS + Android',
 };
 
-const header = (): string => `${REPORT_MARKER}\n## ${REPORT_HEADING}`;
+const header = (): string => `${DOCS_REPORT_MARKER}\n## ${REPORT_HEADING}`;
 
 const riskTable = (input: ReportInput): string =>
   [

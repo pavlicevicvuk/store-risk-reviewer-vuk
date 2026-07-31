@@ -1,0 +1,59 @@
+name: Guideline corpus refresh
+
+on:
+  schedule:
+    # 06:00 UTC on the 1st of each month.
+    - cron: '0 6 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: corpus-refresh
+  cancel-in-progress: true
+
+jobs:
+  refresh_corpus:
+    runs-on: ubuntu-latest
+    container: node:22.14.0
+    timeout-minutes: 15
+
+    steps:
+      - name: Fix git container safe directory issue
+        run: git config --global --add safe.directory '*'
+
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      - name: Refresh guideline corpus
+        run: node --experimental-strip-types src/ingestGuidelines.ts
+
+      - name: Push corpus changes
+        id: push
+        run: |
+          corpus_path="src/corpus/guidelines.jsonl"
+          if git diff --quiet -- "$corpus_path"; then
+            echo "No corpus changes; nothing to do."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          branch="chore/corpus-refresh-$(date +%Y%m%d)"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add "$corpus_path"
+          git commit -m "chore(corpus): refresh guideline corpus"
+          git push -u origin "$branch" --force
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+      - name: Open refresh PR
+        if: steps.push.outputs.changed == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CORPUS_BRANCH: ${{ steps.push.outputs.branch }}
+          CORPUS_BASE: ${{ github.event.repository.default_branch }}
+        run: node --experimental-strip-types src/openCorpusPr.ts

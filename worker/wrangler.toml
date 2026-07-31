@@ -1,0 +1,14 @@
+name = "store-risk-reviewer-forwarder"
+main = "src/index.ts"
+compatibility_date = "2026-07-01"
+
+# Non-secret configuration. Keep these in sync with reviewer.config.json in the repo root.
+[vars]
+GITHUB_APP_ID = "REPLACE_WITH_APP_ID"
+REVIEWER_REPO = "Trainerize/store-risk-reviewer"
+TARGET_REPO = "Trainerize/ReactNativeApp"
+BASE_BRANCH = "reactDev"
+
+# Secrets are set out of band, never committed:
+#   wrangler secret put GITHUB_APP_PRIVATE_KEY   (PKCS#8 PEM)
+#   wrangler secret put GITHUB_WEBHOOK_SECRET

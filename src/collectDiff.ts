@@ -1,11 +1,16 @@
 import { execFileSync } from 'node:child_process';
 
+import { getRepoRoot } from './env.ts';
 import type { DiffFile } from './types.ts';
 
 const MAX_BUFFER = 128 * 1024 * 1024;
 
 const runGit = (args: string[]): string =>
-  execFileSync('git', args, { encoding: 'utf8', maxBuffer: MAX_BUFFER });
+  execFileSync('git', args, {
+    cwd: getRepoRoot(),
+    encoding: 'utf8',
+    maxBuffer: MAX_BUFFER,
+  });
 
 const parseNameStatusLine = (line: string): { status: string; path: string } | undefined => {
   const parts = line.split('\t').filter((part) => part.length > 0);

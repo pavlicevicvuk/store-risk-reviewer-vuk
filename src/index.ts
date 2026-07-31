@@ -7,6 +7,7 @@ import { refreshCorpus } from './ingestGuidelines.ts';
 import { renderFailure, renderNoRelevantFiles, renderReport } from './render.ts';
 import { scoreFindings } from './score.ts';
 import { selectFiles } from './selectFiles.ts';
+import { writeSummary } from './summary.ts';
 
 const getBaseRef = (): string =>
   process.env.AI_REVIEW_BASE_SHA || process.env.GITHUB_BASE_REF || 'origin/main';
@@ -47,6 +48,7 @@ const main = async (): Promise<void> => {
   const relevantFiles = selectFiles(changedFiles);
 
   if (relevantFiles.length === 0) {
+    writeSummary({ kind: 'docs', status: 'skipped', combinedRisk: 'Unknown', findings: 0 });
     writeReport(outputPath, renderNoRelevantFiles(CORPUS_VERSION, model));
     console.log('AI review: no store-relevant files changed.');
     return;
@@ -58,6 +60,13 @@ const main = async (): Promise<void> => {
 
   const analysis = await analyzeChanges(relevantFiles);
   const risk = scoreFindings(analysis.findings);
+
+  writeSummary({
+    kind: 'docs',
+    status: 'ok',
+    combinedRisk: risk.combinedRisk,
+    findings: analysis.findings.length,
+  });
 
   writeReport(
     outputPath,
@@ -82,6 +91,7 @@ const main = async (): Promise<void> => {
 // non-zero so the check surfaces the failure.
 main().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
+  writeSummary({ kind: 'docs', status: 'failed', combinedRisk: 'Unknown', findings: 0 });
   try {
     writeReport(
       getOutputPath(),

@@ -3,11 +3,11 @@ import { writeFileSync } from 'node:fs';
 import { getModelLabel, runAgent } from './agentRunner.ts';
 import { CORPUS_VERSION, serializeGuidelinesForPrompt } from './corpus.ts';
 import { refreshCorpus } from './ingestGuidelines.ts';
+import { AUDIT_REPORT_MARKER } from './markers.ts';
 import { scoreFindings } from './score.ts';
+import { writeSummary } from './summary.ts';
 import type { Finding } from './types.ts';
 import { extractFindingsPayload } from './validate.ts';
-
-const AUDIT_MARKER = '<!-- ai-audit-report -->';
 
 const getOutputPath = (): string => process.env.AI_AUDIT_OUTPUT || 'ai_audit_report.md';
 
@@ -93,7 +93,7 @@ const renderReport = (findings: Finding[], elapsedMs: number): string => {
     (a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity],
   );
   const body = [
-    AUDIT_MARKER,
+    AUDIT_REPORT_MARKER,
     '## AI Whole-Repository Store Rejection Risk Audit',
     '',
     '> Scans the **entire repository**, independent of any diff. Findings may include pre-existing issues and require human triage.',
@@ -149,6 +149,13 @@ const main = async (): Promise<void> => {
   const elapsedMs = Date.now() - startedAt;
   const findings = parseContent(result.stdout);
   const report = renderReport(findings, elapsedMs);
+
+  writeSummary({
+    kind: 'audit',
+    status: 'ok',
+    combinedRisk: scoreFindings(findings).combinedRisk,
+    findings: findings.length,
+  });
 
   writeFileSync(getOutputPath(), report);
   console.log(report);

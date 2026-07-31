@@ -1,0 +1,45 @@
+name: Selftest
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: selftest-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    container: node:22.14.0
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      # The reviewer itself has no runtime dependencies, so this runs before any install.
+      - name: Run reviewer selftest
+        run: node --experimental-strip-types src/selftest.ts
+
+      - name: Run forwarder selftest
+        working-directory: worker
+        run: node --experimental-strip-types src/selftest.ts
+
+      - name: Install dev dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck reviewer
+        run: npx tsc --noEmit
+
+      - name: Install forwarder dev dependencies
+        working-directory: worker
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck forwarder
+        working-directory: worker
+        run: npx tsc --noEmit

@@ -1,0 +1,6 @@
+{
+  "targetRepo": "Trainerize/ReactNativeApp",
+  "baseBranch": "reactDev",
+  "auditBranchPrefix": "ai-audit-demo/",
+  "forkApprovalLabel": "ai-review:approved"
+}

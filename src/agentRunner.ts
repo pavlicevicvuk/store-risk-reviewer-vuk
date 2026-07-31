@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
+import { getRepoRoot } from './env.ts';
+
 const execFileAsync = promisify(execFile);
 
 const AGENT_BIN = process.env.AI_REVIEW_AGENT_BIN || 'cursor-agent';
@@ -13,8 +15,6 @@ const DEFAULT_TIMEOUT_MS = 600000;
 // travels in a file the agent reads itself, so the invocation stays far below this; the
 // guard exists to fail loudly if a future change tries to inline a large prompt again.
 export const SAFE_ARG_LIMIT = 100000;
-
-export const getRepoRoot = (): string => process.env.AI_REVIEW_REPO_ROOT || process.cwd();
 
 // Override anytime with AI_REVIEW_MODEL.
 export const DEFAULT_MODEL = 'composer-2.5';
