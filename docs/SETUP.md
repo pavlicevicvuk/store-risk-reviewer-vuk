@@ -51,10 +51,52 @@ In `store-risk-reviewer` -> Settings -> Secrets and variables -> Actions:
 | Secret | `REVIEWER_APP_PRIVATE_KEY` | Full contents of the downloaded `.pem` |
 | Secret | `CURSOR_API_KEY` | Cursor API key used for agent calls |
 
-## 3. Deploy the forwarder
+## 3. Choose how pull requests start a review
 
-GitHub Apps deliver webhooks but cannot start a workflow, so the worker converts the webhook
-into a `repository_dispatch`.
+A GitHub App webhook cannot start Actions by itself. Pick **one** of the paths below.
+
+### 3a. Caller workflow in the target repo (no Cloudflare)
+
+Add a thin workflow in the repository under review that calls this repo's reusable
+workflow on `pull_request`. Example (adjust the `uses:` owner/repo if yours differs):
+
+```yaml
+name: Store risk review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    branches: [reactDev]
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+concurrency:
+  group: store-risk-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  review:
+    uses: OWNER/store-risk-reviewer/.github/workflows/pr-review.yml@main
+    with:
+      pr: ${{ github.event.pull_request.number }}
+      auth: github_token          # or github_app if the App is installed here
+      target_repo: ${{ github.repository }}
+      app_repository: ${{ github.event.repository.name }}
+    secrets:
+      CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+      REVIEWER_APP_PRIVATE_KEY: ${{ secrets.REVIEWER_APP_PRIVATE_KEY }}
+```
+
+In the **target** repo, set secret `CURSOR_API_KEY` (and App secrets/vars if
+`auth: github_app`). In this reviewer repo, open
+Settings → Actions → General → Access and allow the target repository to use
+reusable workflows.
+
+With this path you can leave the App webhook inactive and skip the worker.
+
+### 3b. Deploy the Cloudflare forwarder (App webhook path)
+
+GitHub Apps deliver webhooks but cannot start a workflow, so the worker converts the
+webhook into a `repository_dispatch`.
 
 The private key needs converting first. GitHub issues PKCS#1, and WebCrypto only imports
 PKCS#8:
@@ -112,13 +154,15 @@ things contain it:
 1. **Forks need human approval.** `decide()` in [`src/resolvePr.ts`](../src/resolvePr.ts)
    refuses any pull request whose head repo differs from its base repo unless a maintainer
    applied `ai-review:approved`.
-2. **Tokens are downscoped per use.** The workflow mints a token limited to `ReactNativeApp`
-   with `contents: read`, so the review path cannot push. The worker mints a separate token
-   limited to `store-risk-reviewer` purely for the dispatch.
-3. **Dispatch payloads are not trusted.** Only a PR number crosses the boundary; every SHA,
-   branch, and label is re-read from the API inside the workflow.
-4. **Reviewer code always comes from this repo's default branch**, never from the pull request
-   under review.
+2. **Tokens are downscoped per use.** On the App path, the workflow mints a token limited to
+   the target repo with `contents: read`, so the review path cannot push. The worker (if used)
+   mints a separate token limited to `store-risk-reviewer` purely for the dispatch. On the
+   caller-workflow path with `auth: github_token`, the job uses the caller's `GITHUB_TOKEN`
+   with write limited to pull requests and checks.
+3. **Dispatch / call payloads are not trusted.** Only a PR number crosses the boundary; every
+   SHA, branch, and label is re-read from the API inside the workflow.
+4. **Reviewer code always comes from this repo's pinned ref** (`github.workflow_sha`), never
+   from the pull request under review.
 
 Both gates are covered by the selftests, so a regression in either fails CI rather than
 quietly opening the door.

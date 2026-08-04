@@ -1,10 +1,45 @@
 name: PR store-risk review
 
-# Driven by the Store Risk Reviewer GitHub App: its pull_request webhook reaches the
-# forwarder in worker/, which turns it into the repository_dispatch below. Nothing needs to
-# be installed in the target repository. repository_dispatch only fires for workflow files
-# on the default branch, so use workflow_dispatch when iterating on a branch.
+# Triggers:
+# - workflow_call from the target repo (no Cloudflare forwarder)
+# - repository_dispatch from the App webhook forwarder (worker/)
+# - workflow_dispatch for manual / branch testing
+#
+# repository_dispatch and workflow_call only see workflow files on the ref being
+# used (default branch for dispatch; the pinned ref for call), so use
+# workflow_dispatch when iterating on a branch of this repo.
 on:
+  workflow_call:
+    inputs:
+      pr:
+        description: Pull request number in the target repository
+        required: true
+        type: string
+      mode:
+        description: Which review to run (blank follows the branch prefix)
+        required: false
+        type: string
+        default: ''
+      target_repo:
+        description: owner/name to review (defaults to caller repository)
+        required: false
+        type: string
+        default: ''
+      app_repository:
+        description: Repo name (no owner) for App token scope; ignored when auth is github_token
+        required: false
+        type: string
+        default: ''
+      auth:
+        description: github_app (mint installation token) or github_token (caller GITHUB_TOKEN)
+        required: false
+        type: string
+        default: github_app
+    secrets:
+      CURSOR_API_KEY:
+        required: true
+      REVIEWER_APP_PRIVATE_KEY:
+        required: false
   repository_dispatch:
     types: [pr_review]
   workflow_dispatch:
@@ -22,14 +57,21 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
+  checks: write
 
 concurrency:
-  group: pr-review-${{ github.event.client_payload.pr || inputs.pr }}
+  group: pr-review-${{ inputs.pr || github.event.client_payload.pr }}
   cancel-in-progress: true
 
 env:
-  PR_NUMBER: ${{ github.event.client_payload.pr || inputs.pr }}
-  MODE_OVERRIDE: ${{ github.event.client_payload.mode || inputs.mode }}
+  PR_NUMBER: ${{ inputs.pr || github.event.client_payload.pr }}
+  MODE_OVERRIDE: ${{ inputs.mode || github.event.client_payload.mode || '' }}
+  # Dispatch / workflow_dispatch: empty → resolvePr uses reviewer.config.json.
+  # workflow_call: default to the caller repository unless target_repo is passed.
+  TARGET_REPO_OVERRIDE: ${{ inputs.target_repo || (github.event_name == 'workflow_call' && github.repository) || '' }}
+  APP_REPOSITORY: ${{ inputs.app_repository || 'ReactNativeApp' }}
+  AUTH_MODE: ${{ inputs.auth || 'github_app' }}
   REPORT_FILE: ${{ github.workspace }}/ai_review_report.md
   SUMMARY_FILE: ${{ github.workspace }}/ai_review_summary.json
 
@@ -43,6 +85,11 @@ jobs:
       - name: Check out reviewer
         uses: actions/checkout@v4
         with:
+          # workflow_call runs in the caller context, so github.repository is the target
+          # app — always pin this reviewer repo. workflow_sha is the commit of the
+          # workflow file being executed (the @ref on uses: / the dispatch branch).
+          repository: pavlicevicvuk/store-risk-reviewer-vuk
+          ref: ${{ github.workflow_sha }}
           path: reviewer
 
       - name: Fix git container safe directory issue
@@ -52,31 +99,42 @@ jobs:
       # it must never be able to push.
       - name: Mint app installation token
         id: app-token
+        if: env.AUTH_MODE == 'github_app'
         uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ vars.REVIEWER_APP_ID }}
           private-key: ${{ secrets.REVIEWER_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
-          repositories: ReactNativeApp
+          repositories: ${{ env.APP_REPOSITORY }}
           permission-contents: read
           permission-metadata: read
           permission-pull-requests: write
           permission-checks: write
 
-      # Metadata comes from the API rather than the webhook payload, so a forged or stale
-      # dispatch cannot steer the run at a different branch or commit.
+      - name: Select API token
+        id: token
+        run: |
+          if [ "${AUTH_MODE}" = "github_app" ]; then
+            echo "value=${{ steps.app-token.outputs.token }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${{ github.token }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Metadata comes from the API rather than the webhook/call payload, so a forged or
+      # stale dispatch cannot steer the run at a different branch or commit.
       - name: Resolve pull request
         id: pr
         env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.token.outputs.value }}
           AI_REVIEW_PR_NUMBER: ${{ env.PR_NUMBER }}
           AI_REVIEW_MODE_OVERRIDE: ${{ env.MODE_OVERRIDE }}
+          AI_REVIEW_TARGET_REPO: ${{ env.TARGET_REPO_OVERRIDE }}
         run: node --experimental-strip-types reviewer/src/resolvePr.ts
 
       - name: Clone target repository
         if: steps.pr.outputs.run == 'true'
         env:
-          TOKEN: ${{ steps.app-token.outputs.token }}
+          TOKEN: ${{ steps.token.outputs.value }}
           TARGET_REPO: ${{ steps.pr.outputs.target_repo }}
           BASE_SHA: ${{ steps.pr.outputs.base_sha }}
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
@@ -134,7 +192,7 @@ jobs:
       - name: Post report to the pull request
         if: always() && steps.pr.outputs.run == 'true'
         env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.token.outputs.value }}
           AI_REVIEW_TARGET_REPO: ${{ steps.pr.outputs.target_repo }}
           AI_REVIEW_PR_NUMBER: ${{ env.PR_NUMBER }}
           AI_REVIEW_REPORT_FILE: ${{ env.REPORT_FILE }}
