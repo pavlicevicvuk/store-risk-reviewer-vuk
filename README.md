@@ -3,32 +3,42 @@
 Report-only pull request bot that reviews React Native diffs against official Apple App Store
 and Google Play guidelines, and posts a risk assessment back to the pull request.
 
-It runs entirely outside the repository it reviews. `Trainerize/ReactNativeApp` needs no
-workflow file, no secret, and no committed configuration: a GitHub App watches its pull
-requests and this repo does the work.
+Review logic lives in this repo. Pull requests can start a run in either of two ways:
+
+1. **Caller workflow** in the target repo (`workflow_call` into
+   [`.github/workflows/pr-review.yml`](.github/workflows/pr-review.yml)) — no Cloudflare.
+2. **GitHub App webhook** → Cloudflare Worker → `repository_dispatch` — target repo stays
+   free of workflow files and secrets.
 
 ## How a review happens
 
 ```mermaid
 sequenceDiagram
-    participant PR as ReactNativeApp PR
+    participant PR as Target repo PR
+    participant Caller as Optional caller workflow
     participant App as Store Risk Reviewer App
     participant W as Forwarder (Cloudflare Worker)
     participant GA as Actions in this repo
-    PR->>App: pull_request opened/synchronize/reopened/labeled
-    App->>W: webhook, HMAC signed
-    W->>W: verify signature, filter repo/action/base branch
-    W->>GA: POST /dispatches (pr_review, client_payload {pr})
-    GA->>GA: mint installation token, re-read PR from the API
+    alt Caller workflow in target repo
+      PR->>Caller: pull_request opened/synchronize/reopened/labeled
+      Caller->>GA: workflow_call(pr)
+    else App webhook + forwarder
+      PR->>App: pull_request opened/synchronize/reopened/labeled
+      App->>W: webhook, HMAC signed
+      W->>W: verify signature, filter repo/action/base branch
+      W->>GA: POST /dispatches (pr_review, client_payload {pr})
+    end
+    GA->>GA: mint token (App or GITHUB_TOKEN), re-read PR from the API
     GA->>GA: blobless clone of the target at head SHA
     GA->>GA: run the reviewer with cwd = the clone
-    GA->>PR: upsert comment + check run, as the App
+    GA->>PR: upsert comment + check run
 ```
 
-A GitHub App cannot start a workflow by itself, so [`worker/`](worker/src/index.ts) is the
-minimal bridge between the App's webhook and `repository_dispatch`. Only the pull request
-number travels in the dispatch payload; [`src/resolvePr.ts`](src/resolvePr.ts) re-reads
-everything else from the API so a replayed or tampered dispatch cannot redirect a run.
+A GitHub App cannot start a workflow by itself. Either the target repo calls this workflow
+directly, or [`worker/`](worker/src/index.ts) bridges the App webhook to
+`repository_dispatch`. Only the pull request number crosses that boundary;
+[`src/resolvePr.ts`](src/resolvePr.ts) re-reads everything else from the API so a replayed
+or tampered payload cannot redirect a run.
 
 ## Layout
 
